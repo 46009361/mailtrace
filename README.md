@@ -9,3 +9,7 @@ The problem is that a computer can easily go through 4 294 967 296 combinations,
 To ensure it's extra clear what I meant, I've created this minimal demo.
 
 Paste the link of any public Chrome extension and you'll get what the longer ID will be! The rest of the ID is not random; it's the same every time, even on different devices.
+
+## Note on WakaTime Hours
+
+I forgot to install WakaTime and thought it was automatically configured for me in Hack Club Spaces, which is why it doesn't show the correct number of hours. Therefore, please be aware that voting as usual on Flavortown will cause a lower hour multiplier. This may be expressed as confession #36620 in #confessions on Hack Club Slack.
