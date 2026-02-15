@@ -12,4 +12,4 @@ Paste the link of any public Chrome extension and you'll get what the longer ID 
 
 ## Note on WakaTime Hours
 
-I forgot to install WakaTime and thought it was automatically configured for me in Hack Club Spaces, which is why it doesn't show the correct number of hours. Therefore, please be aware that voting as usual on Flavortown will cause a lower hour multiplier. This may be expressed as confession #36620 in #confessions on Hack Club Slack.
+I forgot to install WakaTime and thought it was automatically configured for me in Hack Club Spaces, which is why it doesn't show the correct number of hours. Therefore, please be aware that voting as usual on Flavortown will cause a lower hour multiplier. More details *may* be om confession #36620 in #confessions on Hack Club Slack.
