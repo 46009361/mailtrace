@@ -866,29 +866,24 @@ async function geolocateIP(ip) {
     const target = `https://ip.hackclub.com/${ip}?ref=mailtrace.4600936.one`;
     const res = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(target)}&key=DEaDbeEF`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
 
-    // Cascade through location fields from most to least specific
-    const city = d.city_name
-      || d.subdivision_2_name
-      || d.subdivision_1_name
-      || d.continent_name
-      || 'Unknown';
+    // corsproxy may return the body as a string — handle both cases
+    let d = await res.json();
+    if (typeof d === 'string') d = JSON.parse(d);
 
-    const country = d.country_name || d.country_iso_code || '';
-
-    // ISP: may be null for large cloud/CDN ranges — fall back to network CIDR
-    const isp = d.isp_name || d.network || 'Unknown ISP';
-
+    // Use exact field names from the API response
     const lat = parseFloat(d.latitude);
     const lng = parseFloat(d.longitude);
+    if (isNaN(lat) || isNaN(lng)) throw new Error('No coordinates: ' + JSON.stringify(d).slice(0, 200));
 
-    // Lat/lng are always present even for broad ranges (centroid of the range)
-    if (isNaN(lat) || isNaN(lng)) throw new Error('No coordinates in response');
+    const city = d.city_name || d.subdivision_1_name || d.subdivision_2_name || d.continent_name || 'Unknown';
+    const country = d.country_name || d.country_iso_code || '';
+    const isp = d.isp_name || d.network || '';
 
     return { lat, lng, city, country, isp };
   } catch (e) {
     console.warn('Geolocation failed for', ip, e);
+    showError('Geolocation error for ' + ip + ': ' + e.message);
     return null;
   }
 }
@@ -961,8 +956,8 @@ async function geolocateAll() {
       hops[i].country = geo.country;
       hops[i].isp = geo.isp;
     } else {
-      hops[i].city = 'Unknown location';
-      hops[i].isp = 'Unknown ISP';
+      hops[i].city = 'Lookup failed';
+      hops[i].isp = '';
     }
     renderHops();
   });
