@@ -4,8 +4,11 @@ Visualize the path of your emails being delivered on Google Earth! In the midst 
 
 ## How to Use
 
-Coming soon…
+1. Download a message you received from your email client
+2. Edit any incorrect locations if necessary
+   * Example: A Google data center in the United States being located in China
+3. Visualize on Google Earth
 
-### To-do
+### Internal to-do:
 
-- [ ] Change to `mailtrace` subdomain
+- [x] Change to `mailtrace` subdomain
