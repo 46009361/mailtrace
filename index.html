@@ -866,16 +866,27 @@ async function geolocateIP(ip) {
     const target = `https://ip.hackclub.com/${ip}?ref=4600936.one`;
     const res = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(target)}&key=DEaDbeEF`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    // ip.hackclub.com uses MaxMind GeoLite2 field names:
-    // latitude, longitude, city_name, country_name, isp_name
-    return {
-      lat: parseFloat(data.latitude),
-      lng: parseFloat(data.longitude),
-      city: data.city_name || data.subdivision_1_name || 'Unknown',
-      country: data.country_name || '',
-      isp: data.isp_name || 'Unknown ISP'
-    };
+    const d = await res.json();
+
+    // Cascade through location fields from most to least specific
+    const city = d.city_name
+      || d.subdivision_2_name
+      || d.subdivision_1_name
+      || d.continent_name
+      || 'Unknown';
+
+    const country = d.country_name || d.country_iso_code || '';
+
+    // ISP: may be null for large cloud/CDN ranges — fall back to network CIDR
+    const isp = d.isp_name || d.network || 'Unknown ISP';
+
+    const lat = parseFloat(d.latitude);
+    const lng = parseFloat(d.longitude);
+
+    // Lat/lng are always present even for broad ranges (centroid of the range)
+    if (isNaN(lat) || isNaN(lng)) throw new Error('No coordinates in response');
+
+    return { lat, lng, city, country, isp };
   } catch (e) {
     console.warn('Geolocation failed for', ip, e);
     return null;
