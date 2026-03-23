@@ -765,14 +765,14 @@ async function geolocateIP(ip) {
     const res = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(target)}&key=DEaDbeEF`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    const rawOrg = data.org || data.isp || '';
-    const isp = rawOrg.replace(/^AS\d+\s*/i, '').trim() || 'Unknown ISP';
+    // ip.hackclub.com uses MaxMind GeoLite2 field names:
+    // latitude, longitude, city_name, country_name, isp_name
     return {
       lat: parseFloat(data.latitude),
       lng: parseFloat(data.longitude),
-      city: data.city || data.region || 'Unknown',
-      country: data.country || '',
-      isp
+      city: data.city_name || data.subdivision_1_name || 'Unknown',
+      country: data.country_name || '',
+      isp: data.isp_name || 'Unknown ISP'
     };
   } catch (e) {
     console.warn('Geolocation failed for', ip, e);
