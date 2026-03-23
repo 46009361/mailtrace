@@ -761,7 +761,7 @@ async function resolveHostname(hostname) {
 // ════════════════════════════════════════════
 async function geolocateIP(ip) {
   try {
-    const target = `https://ip.hackclub.com/${ip}?ref=4600936.one`;
+    const target = `https://ip.hackclub.com/${ip}?ref=mailtrace.4600936.one`;
     const res = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(target)}&key=DEaDbeEF`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
