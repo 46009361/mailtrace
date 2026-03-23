@@ -1,18 +1,1366 @@
 <!DOCTYPE html>
-<html>
-    <head>
-        <meta name="viewport" content="width=device-width">
-        <meta name="og:image" content="thumbnail.png"> <!-- add later -->
-        <script type="module" src="getfile.js"></script>
-        <title>Quantum-Safe Extension IDs</title>
-        <link rel="stylesheet" href="common.css">
-    </head>
-    <body>
-        <form id="form">
-            <label for="input">Chrome extension URL:</label><br>
-            <input id="input" placeholder="Paste link here" type="url">
-            <input type="submit">
-        </form>
-        <p><code id="result"></code></p>
-    </body>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MailTrace — Email Path Visualizer</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --surface2: #1a1d24;
+    --border: #2a2d35;
+    --accent: #00e5ff;
+    --accent2: #ff6b35;
+    --accent3: #7fff6b;
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --danger: #ff4444;
+    --mono: 'Space Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,229,255,0.015) 2px, rgba(0,229,255,0.015) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  header {
+    padding: 24px 40px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--surface);
+  }
+
+  .logo {
+    font-family: var(--mono);
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: -1px;
+  }
+
+  .logo span { color: var(--accent2); }
+
+  .tagline {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-left: auto;
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    height: calc(100vh - 73px);
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-section {
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  /* Drop zone */
+  #drop-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  #drop-zone:hover, #drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(0,229,255,0.04);
+  }
+
+  #drop-zone input {
+    position: absolute; inset: 0;
+    opacity: 0; cursor: pointer; width: 100%;
+  }
+
+  .drop-icon {
+    font-size: 2rem;
+    margin-bottom: 10px;
+    filter: grayscale(0.3);
+  }
+
+  .drop-text {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .drop-text strong { color: var(--accent); }
+
+  /* API key */
+  .input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  input[type="text"], input[type="password"] {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input[type="text"]:focus, input[type="password"]:focus {
+    border-color: var(--accent);
+  }
+
+  /* Hops list */
+  .hops-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .hops-scroll::-webkit-scrollbar { width: 4px; }
+  .hops-scroll::-webkit-scrollbar-track { background: transparent; }
+  .hops-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .hop-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 10px;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+
+  .hop-card:hover { border-color: var(--accent); }
+
+  .hop-card.origin { border-left: 3px solid var(--accent3); }
+  .hop-card.destination { border-left: 3px solid var(--accent2); }
+  .hop-card.intermediate { border-left: 3px solid var(--accent); }
+
+  .hop-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .hop-index {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    background: var(--border);
+    color: var(--muted);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  .hop-ip {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--accent);
+    flex: 1;
+  }
+
+  .hop-location {
+    font-size: 0.8rem;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .hop-time {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .hop-delta {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--accent3);
+  }
+
+  .edit-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .edit-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  .edit-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .edit-row input {
+    flex: 1;
+    padding: 5px 8px;
+    font-size: 0.7rem;
+  }
+
+  .save-btn {
+    background: var(--accent);
+    border: none;
+    color: var(--bg);
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    cursor: pointer;
+    font-weight: 700;
+  }
+
+  /* Status bar */
+  #status-bar {
+    padding: 10px 24px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+  }
+
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+  }
+
+  .status-dot.active {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: pulse 1.5s infinite;
+  }
+
+  .status-dot.done { background: var(--accent3); }
+  .status-dot.error { background: var(--danger); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* Action buttons */
+  .actions {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+  }
+
+  .btn-primary {
+    flex: 1;
+    background: var(--accent);
+    border: none;
+    color: var(--bg);
+    padding: 11px 16px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+
+  .btn-primary:hover { background: #33eaff; transform: translateY(-1px); }
+  .btn-primary:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; transform: none; }
+
+  .btn-secondary {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 11px 16px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-secondary:hover { border-color: var(--text); color: var(--text); }
+
+  /* ── MAP PANEL ── */
+  #map-panel {
+    position: relative;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+  }
+
+  #map {
+    width: 100%;
+    height: 100%;
+    display: none;
+  }
+
+  .map-placeholder {
+    text-align: center;
+    padding: 40px;
+  }
+
+  .map-placeholder .big-icon {
+    font-size: 5rem;
+    opacity: 0.15;
+    margin-bottom: 20px;
+    display: block;
+  }
+
+  .map-placeholder h2 {
+    font-family: var(--mono);
+    font-size: 1rem;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .map-placeholder p {
+    font-size: 0.85rem;
+    color: var(--muted);
+    max-width: 340px;
+    line-height: 1.6;
+    opacity: 0.7;
+  }
+
+  /* Playback controls */
+  #playback-controls {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(17,19,24,0.9);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 24px;
+    display: none;
+    align-items: center;
+    gap: 16px;
+    min-width: 420px;
+  }
+
+  #play-btn {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    color: var(--bg);
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+
+  #play-btn:hover { background: #33eaff; transform: scale(1.1); }
+
+  #progress-bar-wrap {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    cursor: pointer;
+    position: relative;
+  }
+
+  #progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.1s linear;
+  }
+
+  #hop-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .speed-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+  }
+
+  .speed-control select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    cursor: pointer;
+  }
+
+  /* Tooltip on map */
+  #map-tooltip {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: rgba(17,19,24,0.92);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    line-height: 1.8;
+    display: none;
+    min-width: 220px;
+  }
+
+  #map-tooltip .tt-ip { color: var(--accent); font-size: 0.9rem; }
+  #map-tooltip .tt-city { color: var(--text); }
+  #map-tooltip .tt-time { color: var(--muted); }
+  #map-tooltip .tt-delta { color: var(--accent3); }
+
+  /* Privacy note */
+  .privacy-note {
+    background: rgba(127,255,107,0.06);
+    border: 1px solid rgba(127,255,107,0.2);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 0.75rem;
+    color: var(--accent3);
+    line-height: 1.5;
+  }
+  .privacy-note strong { display: block; margin-bottom: 2px; font-family: var(--mono); font-size: 0.65rem; letter-spacing: 1px; }
+
+  /* Empty hops message */
+  .empty-hops {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    line-height: 2;
+  }
+
+  /* Loading spinner */
+  .spinner {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .hidden { display: none !important; }
+
+  /* Strip all default InfoWindow chrome — only our inner div shows */
+  .gm-style .gm-style-iw-c {
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+  }
+  .gm-style .gm-style-iw-d { overflow: visible !important; }
+  .gm-style .gm-style-iw-t::after { display: none !important; }
+  .gm-style-iw-tc { display: none !important; }
+  .gm-ui-hover-effect { display: none !important; }
+  .gm-style-iw-chr { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Mail<span>Trace</span></div>
+  <div class="tagline">Email Path Visualizer &nbsp;·&nbsp; 100% Client-Side</div>
+</header>
+
+<main>
+  <!-- ── SIDEBAR ── -->
+  <div class="sidebar">
+
+    <!-- Drop zone -->
+    <div class="sidebar-section">
+      <div class="section-label">01 &nbsp;Load EML File</div>
+      <div id="drop-zone">
+        <input type="file" id="eml-input" accept=".eml,.txt">
+        <div class="drop-icon">📧</div>
+        <div class="drop-text">
+          <strong>Drop your .eml file here</strong><br>
+          or click to browse<br><br>
+          Headers are parsed entirely<br>
+          in your browser — nothing is uploaded.
+        </div>
+      </div>
+    </div>
+
+    <!-- Privacy note -->
+    <div class="sidebar-section">
+      <div class="privacy-note">
+        <strong>🔒 PRIVACY</strong>
+        EML parsing happens entirely in your browser. Only extracted IP addresses are sent to <code>ip.hackclub.com</code> for geolocation. Your email content never leaves your device.
+      </div>
+    </div>
+
+    <!-- API Key -->
+    <div class="sidebar-section">
+      <div class="section-label">02 &nbsp;Google Maps API Key</div>
+      <div class="input-row">
+        <input type="password" id="api-key" placeholder="AIzaSyDt5b5KCYtJCGtKtJA0-oHHzWQKtjX6x_I">
+      </div>
+      <div style="margin-top:8px; font-size:0.72rem; color:var(--muted); line-height:1.5;">
+        Needs the <strong style="color:var(--text)">Maps JavaScript API</strong> enabled.<br>
+        <a href="https://console.cloud.google.com/apis/library/maps-backend.googleapis.com" target="_blank" style="color:var(--accent);">Get a free key →</a>
+      </div>
+    </div>
+
+    <!-- Hops list -->
+    <div class="section-label" style="padding:16px 24px 0;">03 &nbsp;Detected Hops</div>
+    <div class="hops-scroll" id="hops-list">
+      <div class="empty-hops">
+        Drop an EML file above<br>to see extracted hops here.
+      </div>
+    </div>
+
+    <!-- Status -->
+    <div id="status-bar">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Waiting for file…</span>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button class="btn-secondary" id="reset-btn">Reset</button>
+      <button class="btn-primary" id="visualize-btn" disabled>Visualize Route</button>
+    </div>
+  </div>
+
+  <!-- ── MAP PANEL ── -->
+  <div id="map-panel">
+    <div class="map-placeholder" id="map-placeholder">
+      <span class="big-icon">🌍</span>
+      <h2>Your email's journey will appear here</h2>
+      <p>Load an EML file and click "Visualize Route" to watch your email fly across the globe, hop by hop.</p>
+    </div>
+    <div id="map"></div>
+
+    <!-- Tooltip -->
+    <div id="map-tooltip">
+      <div class="tt-ip" id="tt-ip">—</div>
+      <div class="tt-city" id="tt-city">—</div>
+      <div id="tt-isp" style="font-family:var(--mono);font-size:0.65rem;color:var(--accent2);margin-bottom:2px;"></div>
+      <div class="tt-time" id="tt-time">—</div>
+      <div class="tt-delta" id="tt-delta"></div>
+    </div>
+
+    <!-- Playback controls -->
+    <div id="playback-controls">
+      <button id="play-btn" title="Play/Pause">▶</button>
+      <div id="progress-bar-wrap">
+        <div id="progress-bar"></div>
+      </div>
+      <div id="hop-label">Hop 0 / 0</div>
+      <div class="speed-control">
+        Speed:
+        <select id="speed-select">
+          <option value="0.25">0.25×</option>
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+// ════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════
+let hops = [];           // [{ip, timestamp, lat, lng, city, country, delta_ms}]
+let map = null;
+let animationId = null;
+let isPlaying = false;
+let currentHopIndex = 0;
+let flightPath = null;
+let markers = [];
+let plane = null;
+
+// ════════════════════════════════════════════
+//  EML PARSING
+// ════════════════════════════════════════════
+
+/**
+ * Extracts hops from EML "Received:" headers.
+ * Each Received header contains:
+ *   - from/by clauses with IPs in brackets
+ *   - a trailing timestamp after a semicolon
+ *
+ * We parse bottom-up (oldest first = origin → destination).
+ */
+function parseEML(text) {
+  // Unfold header continuations (lines starting with whitespace continue prev header)
+  const unfolded = text.replace(/\r\n([ \t])/g, ' $1').replace(/\n([ \t])/g, ' $1');
+
+  // Extract all Received: headers
+  const receivedHeaders = [];
+  const lines = unfolded.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    // Stop at blank line (end of headers)
+    if (lines[i].trim() === '') break;
+    if (/^received:/i.test(lines[i])) {
+      receivedHeaders.push(lines[i]);
+    }
+  }
+
+  if (receivedHeaders.length === 0) return [];
+
+  // Received headers are newest-first; reverse to get oldest-first (send order)
+  receivedHeaders.reverse();
+
+  const IPv4_RE = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
+  // RFC 2822 date pattern after semicolon at end of Received header
+  const DATE_RE = /;\s*(.+)$/;
+
+  const results = [];
+
+  for (const header of receivedHeaders) {
+    // Find timestamp
+    const dateMatch = header.match(DATE_RE);
+    let timestamp = null;
+    if (dateMatch) {
+      const parsed = new Date(dateMatch[1].trim());
+      if (!isNaN(parsed)) timestamp = parsed;
+    }
+
+    // Find all IPv4s in this header
+    const ips = [];
+    let m;
+    IPv4_RE.lastIndex = 0;
+    while ((m = IPv4_RE.exec(header)) !== null) {
+      const ip = m[1];
+      if (!isPrivateIP(ip)) ips.push(ip);
+    }
+
+    // Use the first public IP found (usually the sending server)
+    if (ips.length > 0 && timestamp) {
+      // Deduplicate by IP+timestamp
+      const key = `${ips[0]}_${timestamp.getTime()}`;
+      if (!results.some(r => `${r.ip}_${r.timestamp.getTime()}` === key)) {
+        results.push({ ip: ips[0], timestamp, lat: null, lng: null, city: '…', country: '', delta_ms: null });
+      }
+    }
+  }
+
+  // Compute deltas between consecutive hops
+  for (let i = 1; i < results.length; i++) {
+    results[i].delta_ms = results[i].timestamp - results[i-1].timestamp;
+  }
+
+  return results;
+}
+
+function isPrivateIP(ip) {
+  const parts = ip.split('.').map(Number);
+  if (parts[0] === 10) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parts[0] === 127) return true;
+  if (parts[0] === 0) return true;
+  return false;
+}
+
+// ════════════════════════════════════════════
+//  GEOLOCATION  (ip.hackclub.com)
+// ════════════════════════════════════════════
+async function geolocateIP(ip) {
+  try {
+    const res = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(`https://ip.hackclub.com/${ip}?ref=4600936.one`)}&key=DEaDbeEF`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    // org is typically "AS##### ISP Name" — strip the ASN prefix for display
+    const rawOrg = data.org || data.isp || '';
+    const isp = rawOrg.replace(/^AS\d+\s*/i, '').trim() || 'Unknown ISP';
+    return {
+      lat: parseFloat(data.latitude),
+      lng: parseFloat(data.longitude),
+      city: data.city || data.region || 'Unknown',
+      country: data.country || '',
+      isp
+    };
+  } catch (e) {
+    console.warn('Geolocation failed for', ip, e);
+    return null;
+  }
+}
+
+// ════════════════════════════════════════════
+//  UI: FILE LOADING
+// ════════════════════════════════════════════
+const dropZone = document.getElementById('drop-zone');
+const emlInput = document.getElementById('eml-input');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+emlInput.addEventListener('change', () => {
+  if (emlInput.files[0]) loadFile(emlInput.files[0]);
+});
+
+function loadFile(file) {
+  setStatus('active', `Reading ${file.name}…`);
+  const reader = new FileReader();
+  reader.onload = async e => {
+    const text = e.target.result;
+    const parsed = parseEML(text);
+    if (parsed.length === 0) {
+      setStatus('error', 'No public IPs with timestamps found in Received headers.');
+      return;
+    }
+    hops = parsed;
+    setStatus('active', `Found ${hops.length} hop(s). Geolocating IPs…`);
+    renderHopsSkeleton();
+    await geolocateAll();
+    renderHops();
+    document.getElementById('visualize-btn').disabled = false;
+    setStatus('done', `${hops.length} hops ready. Click "Visualize Route".`);
+  };
+  reader.readAsText(file);
+}
+
+async function geolocateAll() {
+  const promises = hops.map(async (hop, i) => {
+    const geo = await geolocateIP(hop.ip);
+    if (geo) {
+      hops[i].lat = geo.lat;
+      hops[i].lng = geo.lng;
+      hops[i].city = geo.city;
+      hops[i].country = geo.country;
+      hops[i].isp = geo.isp;
+    } else {
+      hops[i].city = 'Unknown location';
+      hops[i].isp = 'Unknown ISP';
+    }
+    renderHops(); // live update
+  });
+  await Promise.all(promises);
+}
+
+// ════════════════════════════════════════════
+//  UI: HOP CARDS
+// ════════════════════════════════════════════
+function renderHopsSkeleton() {
+  const list = document.getElementById('hops-list');
+  list.innerHTML = hops.map((h, i) => `
+    <div class="hop-card ${cardClass(i, hops.length)}" id="hop-card-${i}">
+      <div class="hop-header">
+        <span class="hop-index">#${i+1}</span>
+        <span class="hop-ip">${h.ip}</span>
+        <button class="edit-btn" onclick="toggleEdit(${i})">Edit</button>
+      </div>
+      <div class="hop-location"><span class="spinner"></span> locating…</div>
+      <div class="hop-isp" id="hop-isp-${i}" style="font-family:var(--mono);font-size:0.65rem;color:var(--accent2);margin-bottom:4px;"></div>
+      <div class="hop-time">${h.timestamp.toUTCString()}</div>
+      ${i > 0 ? `<div class="hop-delta">+${formatDelta(h.delta_ms)} from prev</div>` : ''}
+      <div class="edit-row hidden" id="edit-row-${i}">
+        <input type="text" id="edit-city-${i}" placeholder="City, Country">
+        <input type="text" id="edit-lat-${i}" placeholder="Lat" style="width:70px;flex:none;">
+        <input type="text" id="edit-lng-${i}" placeholder="Lng" style="width:70px;flex:none;">
+        <button class="save-btn" onclick="saveEdit(${i})">Save</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderHops() {
+  const list = document.getElementById('hops-list');
+  if (hops.length === 0) {
+    list.innerHTML = '<div class="empty-hops">Drop an EML file above<br>to see extracted hops here.</div>';
+    return;
+  }
+  hops.forEach((h, i) => {
+    const card = document.getElementById(`hop-card-${i}`);
+    if (!card) return;
+    const locDiv = card.querySelector('.hop-location');
+    if (locDiv) locDiv.textContent = h.city + (h.country ? `, ${h.country}` : '') + (h.lat ? ` (${h.lat.toFixed(2)}, ${h.lng.toFixed(2)})` : '');
+    const ispDiv = document.getElementById(`hop-isp-${i}`);
+    if (ispDiv) ispDiv.textContent = h.isp ? `⬡ ${h.isp}` : '';
+    // prefill edit fields
+    const editCity = document.getElementById(`edit-city-${i}`);
+    if (editCity) editCity.value = h.city + (h.country ? `, ${h.country}` : '');
+    const editLat = document.getElementById(`edit-lat-${i}`);
+    if (editLat) editLat.value = h.lat ?? '';
+    const editLng = document.getElementById(`edit-lng-${i}`);
+    if (editLng) editLng.value = h.lng ?? '';
+  });
+}
+
+function cardClass(i, total) {
+  if (i === 0) return 'origin';
+  if (i === total - 1) return 'destination';
+  return 'intermediate';
+}
+
+function formatDelta(ms) {
+  if (ms === null || ms === undefined) return '?';
+  if (ms < 0) return `−${formatDelta(-ms)}`;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms/1000).toFixed(1)}s`;
+  return `${Math.round(ms/60000)}m`;
+}
+
+function toggleEdit(i) {
+  const row = document.getElementById(`edit-row-${i}`);
+  row.classList.toggle('hidden');
+}
+
+function saveEdit(i) {
+  const city = document.getElementById(`edit-city-${i}`).value.trim();
+  const lat = parseFloat(document.getElementById(`edit-lat-${i}`).value);
+  const lng = parseFloat(document.getElementById(`edit-lng-${i}`).value);
+  if (city) hops[i].city = city;
+  if (!isNaN(lat)) hops[i].lat = lat;
+  if (!isNaN(lng)) hops[i].lng = lng;
+  renderHops();
+  document.getElementById(`edit-row-${i}`).classList.add('hidden');
+  setStatus('done', 'Location updated. Ready to visualize.');
+}
+
+// ════════════════════════════════════════════
+//  STATUS BAR
+// ════════════════════════════════════════════
+function setStatus(type, msg) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  dot.className = 'status-dot ' + type;
+  text.textContent = msg;
+}
+
+// ════════════════════════════════════════════
+//  GOOGLE MAPS INIT
+// ════════════════════════════════════════════
+function loadGoogleMaps(apiKey) {
+  return new Promise((resolve, reject) => {
+    if (window.google && window.google.maps) { resolve(); return; }
+    const existing = document.getElementById('gmap-script');
+    if (existing) existing.remove();
+    window.__mapResolve = resolve;
+    window.__mapReject = reject;
+    const s = document.createElement('script');
+    s.id = 'gmap-script';
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=geometry&callback=__mapResolve`;
+    s.onerror = () => reject(new Error('Failed to load Google Maps. Check your API key.'));
+    document.head.appendChild(s);
+  });
+}
+
+// ════════════════════════════════════════════
+//  VISUALIZE BUTTON
+// ════════════════════════════════════════════
+document.getElementById('visualize-btn').addEventListener('click', async () => {
+  const apiKey = document.getElementById('api-key').value.trim();
+  if (!apiKey) {
+    alert('Please enter your Google Maps API key.');
+    return;
+  }
+
+  const validHops = hops.filter(h => h.lat !== null && h.lng !== null);
+  if (validHops.length < 2) {
+    alert('Need at least 2 geolocated hops to draw a route. Try editing unknown locations manually.');
+    return;
+  }
+
+  setStatus('active', 'Loading Google Maps…');
+  try {
+    await loadGoogleMaps(apiKey);
+  } catch (e) {
+    setStatus('error', 'Maps failed to load. Check API key.');
+    alert('Google Maps failed to load: ' + e.message);
+    return;
+  }
+
+  document.getElementById('map-placeholder').style.display = 'none';
+  const mapEl = document.getElementById('map');
+  mapEl.style.display = 'block';
+
+  initMap(validHops);
+  setStatus('done', 'Map ready — press ▶ to animate the flight.');
+});
+
+// ════════════════════════════════════════════
+//  MAP & ANIMATION
+// ════════════════════════════════════════════
+function initMap(validHops) {
+  // Clear previous
+  if (animationId) cancelAnimationFrame(animationId);
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+  if (flightPath) flightPath.setMap(null);
+  if (plane) plane.setMap(null);
+
+  const mapEl = document.getElementById('map');
+
+  // Center on midpoint of route
+  const avgLat = validHops.reduce((s,h) => s + h.lat, 0) / validHops.length;
+  const avgLng = validHops.reduce((s,h) => s + h.lng, 0) / validHops.length;
+
+  map = new google.maps.Map(mapEl, {
+    center: { lat: avgLat, lng: avgLng },
+    zoom: 3,
+    mapTypeId: 'terrain',
+    styles: DARK_MAP_STYLE,
+    disableDefaultUI: false,
+    zoomControl: true,
+    mapTypeControl: false,
+    streetViewControl: false,
+  });
+
+  // Draw path
+  const pathCoords = validHops.map(h => ({ lat: h.lat, lng: h.lng }));
+  flightPath = new google.maps.Polyline({
+    path: pathCoords,
+    geodesic: true,
+    strokeColor: '#00e5ff',
+    strokeOpacity: 0.4,
+    strokeWeight: 2,
+    icons: [{
+      icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3, strokeColor: '#00e5ff', strokeOpacity: 0.8 },
+      offset: '100%',
+      repeat: '120px'
+    }]
+  });
+  flightPath.setMap(map);
+
+  // Place hop markers — server rack SVG icons
+  validHops.forEach((hop, i) => {
+    const isFirst = i === 0;
+    const isLast = i === validHops.length - 1;
+    const color = isFirst ? '#7fff6b' : isLast ? '#ff6b35' : '#00e5ff';
+    const svgUrl = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(serverSVG(color, isFirst || isLast, 0));
+    const marker = new google.maps.Marker({
+      position: { lat: hop.lat, lng: hop.lng },
+      map,
+      title: `${hop.ip} — ${hop.city}`,
+      icon: { url: svgUrl, scaledSize: new google.maps.Size(32, 40), anchor: new google.maps.Point(16, 40) },
+      zIndex: 10
+    });
+    marker.addListener('click', () => showTooltip(hop, i, validHops.length));
+    markers.push(marker);
+
+    // ISP label pinned below the server icon
+    const color = isFirst ? '#7fff6b' : isLast ? '#ff6b35' : '#00e5ff';
+    const ispLabel = new google.maps.InfoWindow({
+      content: `<div style="
+        font-family:'Space Mono',monospace;
+        font-size:10px;
+        font-weight:700;
+        color:${color};
+        background:rgba(10,12,16,0.82);
+        border:1px solid ${color}44;
+        border-radius:4px;
+        padding:3px 7px;
+        white-space:nowrap;
+        pointer-events:none;
+        letter-spacing:0.5px;
+        text-shadow:0 0 8px ${color};
+      ">${hop.isp || 'Unknown ISP'}</div>`,
+      position: { lat: hop.lat, lng: hop.lng },
+      disableAutoPan: true,
+      pixelOffset: new google.maps.Size(0, 10)
+    });
+    ispLabel.open(map);
+    // Store so we can close on reset
+    markers.push({ setMap: (m) => { if (!m) ispLabel.close(); } });
+  });
+
+  // Plane marker
+  plane = new google.maps.Marker({
+    position: { lat: validHops[0].lat, lng: validHops[0].lng },
+    map,
+    icon: { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(PLANE_SVG), scaledSize: new google.maps.Size(36, 36), anchor: new google.maps.Point(18, 18) },
+    zIndex: 20
+  });
+
+  // Show tooltip for first hop
+  showTooltip(validHops[0], 0, validHops.length);
+
+  // Set up playback
+  setupPlayback(validHops);
+}
+
+function showTooltip(hop, i, total) {
+  const tt = document.getElementById('map-tooltip');
+  tt.style.display = 'block';
+  document.getElementById('tt-ip').textContent = hop.ip;
+  document.getElementById('tt-city').textContent = hop.city + (hop.country ? `, ${hop.country}` : '');
+  document.getElementById('tt-isp').textContent = hop.isp ? `⬡ ${hop.isp}` : '';
+  document.getElementById('tt-time').textContent = hop.timestamp.toUTCString();
+  document.getElementById('tt-delta').textContent = hop.delta_ms !== null ? `+${formatDelta(hop.delta_ms)} from previous` : (i === 0 ? '← origin' : '');
+}
+
+// ════════════════════════════════════════════
+//  PLAYBACK SYSTEM
+// ════════════════════════════════════════════
+let segments = [];     // {from, to, duration_ms} for each hop pair
+let totalDuration = 0;
+let elapsedTime = 0;
+let lastTimestamp = null;
+
+function setupPlayback(hops) {
+  const controls = document.getElementById('playback-controls');
+  controls.style.display = 'flex';
+
+  // Compute segment durations
+  // Use actual deltas; if zero or negative use a minimum
+  const MIN_SEGMENT_MS = 2000;
+  const BASE_SPEED = parseFloat(document.getElementById('speed-select').value);
+
+  segments = [];
+  for (let i = 0; i < hops.length - 1; i++) {
+    let raw = hops[i+1].delta_ms;
+    if (raw === null || raw <= 0) raw = MIN_SEGMENT_MS;
+    segments.push({ from: hops[i], to: hops[i+1], raw_ms: raw });
+  }
+
+  // Normalize flight time proportionally, total ~20s at 1×
+  const totalRaw = segments.reduce((s,seg) => s + seg.raw_ms, 0);
+  const TARGET_TOTAL_MS = 20000;
+  const DWELL_MS = 1200; // plane "sits" at each server rack
+  segments.forEach(seg => {
+    seg.flight_ms = Math.max(1500, Math.min(8000, (seg.raw_ms / totalRaw) * TARGET_TOTAL_MS));
+    seg.dwell_ms  = DWELL_MS; // pause at destination server before next flight
+    seg.anim_ms   = seg.flight_ms + seg.dwell_ms;
+  });
+  totalDuration = segments.reduce((s,seg) => s + seg.anim_ms, 0);
+
+  elapsedTime = 0;
+  currentHopIndex = 0;
+  isPlaying = false;
+  updatePlaybackUI();
+
+  document.getElementById('play-btn').onclick = togglePlay;
+  document.getElementById('speed-select').onchange = () => {
+    // Just resets; speed is applied in animation loop
+  };
+}
+
+function togglePlay() {
+  isPlaying = !isPlaying;
+  document.getElementById('play-btn').textContent = isPlaying ? '⏸' : '▶';
+  if (isPlaying) {
+    lastTimestamp = null;
+    requestAnimationFrame(animLoop);
+  }
+}
+
+function animLoop(ts) {
+  if (!isPlaying) return;
+  if (!lastTimestamp) lastTimestamp = ts;
+  const speed = parseFloat(document.getElementById('speed-select').value);
+  const dt = (ts - lastTimestamp) * speed;
+  lastTimestamp = ts;
+
+  elapsedTime = Math.min(elapsedTime + dt, totalDuration);
+  updatePlanePosition(elapsedTime);
+  updatePlaybackUI();
+
+  if (elapsedTime >= totalDuration) {
+    isPlaying = false;
+    document.getElementById('play-btn').textContent = '▶';
+    elapsedTime = 0;
+    return;
+  }
+
+  animationId = requestAnimationFrame(animLoop);
+}
+
+function updatePlanePosition(elapsed) {
+  let acc = 0;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const segEnd = acc + seg.anim_ms;
+
+    if (elapsed <= segEnd) {
+      const tSeg = elapsed - acc;                  // ms into this segment
+      const inFlight = tSeg < seg.flight_ms;       // still flying vs dwelling
+
+      if (inFlight) {
+        // ── FLIGHT PHASE ──
+        const t = tSeg / seg.flight_ms;            // 0→1
+        const eased = easeInOut(t);
+        const pos = google.maps.geometry.spherical.interpolate(
+          new google.maps.LatLng(seg.from.lat, seg.from.lng),
+          new google.maps.LatLng(seg.to.lat, seg.to.lng),
+          eased
+        );
+        plane.setPosition(pos);
+        plane.setVisible(true);
+
+        const heading = google.maps.geometry.spherical.computeHeading(
+          new google.maps.LatLng(seg.from.lat, seg.from.lng),
+          new google.maps.LatLng(seg.to.lat, seg.to.lng)
+        );
+        plane.setIcon({
+          url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(rotateSVG(PLANE_SVG, heading)),
+          scaledSize: new google.maps.Size(36, 36),
+          anchor: new google.maps.Point(18, 18)
+        });
+
+        if (t > 0.85) showTooltip(seg.to, i + 1, segments.length + 1);
+        document.getElementById('hop-label').textContent = `Flying: hop ${i+1} → ${i+2} / ${segments.length + 1}`;
+
+        // Pulse the destination server marker as plane approaches
+        if (t > 0.7 && markers[i+1]) {
+          const color = (i+1 === segments.length) ? '#ff6b35' : '#00e5ff';
+          const pulse = Math.sin((t - 0.7) * Math.PI / 0.3); // 0→1→0
+          const s = 32 + Math.round(pulse * 6);
+          markers[i+1].setIcon({
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(serverSVG(color, i+1 === 0 || i+1 === segments.length)),
+            scaledSize: new google.maps.Size(s, s * 1.25),
+            anchor: new google.maps.Point(s/2, s * 1.25)
+          });
+        }
+
+      } else {
+        // ── DWELL PHASE — plane has "landed" at the server ──
+        plane.setVisible(false);   // hide plane; it's "inside" the server
+        plane.setPosition(new google.maps.LatLng(seg.to.lat, seg.to.lng));
+
+        showTooltip(seg.to, i + 1, segments.length + 1);
+        document.getElementById('hop-label').textContent = `Processing at hop ${i+2} / ${segments.length + 1}`;
+
+        // Animate server rack glow during dwell
+        const tDwell = (tSeg - seg.flight_ms) / seg.dwell_ms; // 0→1
+        const glowPulse = Math.sin(tDwell * Math.PI); // up and back
+        const s = 32 + Math.round(glowPulse * 8);
+        const color = (i+1 === segments.length) ? '#ff6b35' : (i+1 === 0) ? '#7fff6b' : '#00e5ff';
+        if (markers[i+1]) {
+          markers[i+1].setIcon({
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(serverSVG(color, i+1 === 0 || i+1 === segments.length, glowPulse)),
+            scaledSize: new google.maps.Size(s, s * 1.25),
+            anchor: new google.maps.Point(s/2, s * 1.25)
+          });
+        }
+
+        // When dwell ends, restore plane at this server's position ready for next seg
+        if (tDwell > 0.95) {
+          plane.setVisible(true);
+          plane.setPosition(new google.maps.LatLng(seg.to.lat, seg.to.lng));
+          // Reset server icon size
+          const baseColor = (i+1 === segments.length) ? '#ff6b35' : (i+1 === 0) ? '#7fff6b' : '#00e5ff';
+          if (markers[i+1]) {
+            markers[i+1].setIcon({
+              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(serverSVG(baseColor, i+1 === 0 || i+1 === segments.length, 0)),
+              scaledSize: new google.maps.Size(32, 40),
+              anchor: new google.maps.Point(16, 40)
+            });
+          }
+        }
+      }
+
+      // Highlight active hop card
+      hops.forEach((_, j) => {
+        const card = document.getElementById(`hop-card-${j}`);
+        if (card) {
+          const isActive = inFlight ? (j === i || j === i+1) : j === i+1;
+          card.style.boxShadow = isActive ? `0 0 0 2px var(--accent)` : '';
+        }
+      });
+
+      return;
+    }
+    acc += seg.anim_ms;
+  }
+}
+
+function updatePlaybackUI() {
+  const pct = totalDuration > 0 ? (elapsedTime / totalDuration) * 100 : 0;
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+function easeInOut(t) {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+}
+
+// ════════════════════════════════════════════
+//  PLANE SVG
+// ════════════════════════════════════════════
+const PLANE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <g transform="translate(18,18) rotate(-90) translate(-18,-18)">
+    <polygon points="18,2 28,28 18,22 8,28" fill="#00e5ff" stroke="#0a0c10" stroke-width="1.5"/>
+  </g>
+</svg>`;
+
+function rotateSVG(svg, heading) {
+  // Heading 0 = North, 90 = East. Our arrow points up (north) by default.
+  return svg.replace('rotate(-90)', `rotate(${heading - 90})`);
+}
+
+/**
+ * Returns an inline SVG for a server rack tower.
+ * color    – accent color for LEDs and border
+ * large    – first/last server is slightly bigger
+ * glow     – 0..1 glow intensity for dwell animation
+ */
+function serverSVG(color, large = false, glow = 0) {
+  const glowFilter = glow > 0.05
+    ? `<filter id="gf"><feGaussianBlur stdDeviation="${(glow * 4).toFixed(1)}" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`
+    : '';
+  const filterAttr = glow > 0.05 ? ' filter="url(#gf)"' : '';
+  const opacity = 0.7 + glow * 0.3;
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 40" width="32" height="40">
+  <defs>${glowFilter}</defs>
+  <g${filterAttr} opacity="${opacity.toFixed(2)}">
+    <!-- Shadow -->
+    <ellipse cx="16" cy="39" rx="9" ry="2" fill="#000" opacity="0.35"/>
+    <!-- Main chassis -->
+    <rect x="4" y="4" width="24" height="32" rx="3" fill="#1a1d24" stroke="${color}" stroke-width="${large ? 1.8 : 1.2}"/>
+    <!-- Top rack unit -->
+    <rect x="6" y="7" width="20" height="7" rx="1.5" fill="#111318" stroke="${color}" stroke-width="0.7" stroke-opacity="0.6"/>
+    <!-- LED row top unit -->
+    <circle cx="10" cy="10.5" r="1.5" fill="${color}" opacity="0.9"/>
+    <circle cx="14" cy="10.5" r="1.5" fill="${color}" opacity="${glow > 0.1 ? '1' : '0.4'}"/>
+    <circle cx="18" cy="10.5" r="1.5" fill="#ff6b35" opacity="${glow > 0.1 ? '1' : '0.35'}"/>
+    <!-- Drive slot -->
+    <rect x="21" y="8.5" width="3.5" height="4" rx="0.5" fill="#2a2d35" stroke="${color}" stroke-width="0.5" stroke-opacity="0.5"/>
+
+    <!-- Mid rack unit -->
+    <rect x="6" y="16" width="20" height="7" rx="1.5" fill="#111318" stroke="${color}" stroke-width="0.7" stroke-opacity="0.6"/>
+    <circle cx="10" cy="19.5" r="1.5" fill="${color}" opacity="${glow > 0.2 ? '1' : '0.5'}"/>
+    <circle cx="14" cy="19.5" r="1.5" fill="${color}" opacity="0.4"/>
+    <rect x="21" y="17.5" width="3.5" height="4" rx="0.5" fill="#2a2d35" stroke="${color}" stroke-width="0.5" stroke-opacity="0.5"/>
+
+    <!-- Bottom rack unit -->
+    <rect x="6" y="25" width="20" height="7" rx="1.5" fill="#111318" stroke="${color}" stroke-width="0.7" stroke-opacity="0.6"/>
+    <circle cx="10" cy="28.5" r="1.5" fill="#7fff6b" opacity="${glow > 0.3 ? '1' : '0.4'}"/>
+    <circle cx="14" cy="28.5" r="1.5" fill="${color}" opacity="0.4"/>
+    <rect x="21" y="26.5" width="3.5" height="4" rx="0.5" fill="#2a2d35" stroke="${color}" stroke-width="0.5" stroke-opacity="0.5"/>
+
+    <!-- Mounting ears -->
+    <rect x="2" y="8" width="2" height="5" rx="0.5" fill="#2a2d35" stroke="${color}" stroke-width="0.5" stroke-opacity="0.4"/>
+    <rect x="28" y="8" width="2" height="5" rx="0.5" fill="#2a2d35" stroke="${color}" stroke-width="0.5" stroke-opacity="0.4"/>
+    <rect x="2" y="27" width="2" height="5" rx="0.5" fill="#2a2d35" stroke="${color}" stroke-width="0.5" stroke-opacity="0.4"/>
+    <rect x="28" y="27" width="2" height="5" rx="0.5" fill="#2a2d35" stroke="${color}" stroke-width="0.5" stroke-opacity="0.4"/>
+  </g>
+</svg>`;
+}
+
+// ════════════════════════════════════════════
+//  DARK MAP STYLE
+// ════════════════════════════════════════════
+const DARK_MAP_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#1a1d24' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#6b7280' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#111318' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#2a2d35' }] },
+  { featureType: 'administrative.country', elementType: 'labels.text.fill', stylers: [{ color: '#9ca3af' }] },
+  { featureType: 'landscape', stylers: [{ color: '#13161e' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', stylers: [{ visibility: 'simplified' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2d35' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#4b5563' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0a0f1a' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#374151' }] },
+];
+
+// ════════════════════════════════════════════
+//  RESET
+// ════════════════════════════════════════════
+document.getElementById('reset-btn').addEventListener('click', () => {
+  hops = [];
+  if (animationId) cancelAnimationFrame(animationId);
+  markers.forEach(m => m.setMap(null)); markers = [];
+  if (flightPath) { flightPath.setMap(null); flightPath = null; }
+  if (plane) { plane.setMap(null); plane = null; }
+  document.getElementById('hops-list').innerHTML = '<div class="empty-hops">Drop an EML file above<br>to see extracted hops here.</div>';
+  document.getElementById('visualize-btn').disabled = true;
+  document.getElementById('playback-controls').style.display = 'none';
+  document.getElementById('map').style.display = 'none';
+  document.getElementById('map-placeholder').style.display = '';
+  document.getElementById('map-tooltip').style.display = 'none';
+  emlInput.value = '';
+  setStatus('', 'Waiting for file…');
+  document.getElementById('status-dot').className = 'status-dot';
+});
+
+// Progress bar click to seek
+document.getElementById('progress-bar-wrap').addEventListener('click', function(e) {
+  const rect = this.getBoundingClientRect();
+  const t = (e.clientX - rect.left) / rect.width;
+  elapsedTime = t * totalDuration;
+  updatePlanePosition(elapsedTime);
+  updatePlaybackUI();
+});
+</script>
+</body>
 </html>
