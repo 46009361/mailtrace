@@ -751,9 +751,17 @@ let plane = null;
 
 /**
  * Extracts hops from EML "Received:" headers.
- * For each header we try:
- *   1. A public IPv4 address directly (ideal)
- *   2. A hostname to DNS-resolve to IPv4 via DoH (handles IPv6-only hops)
+ *
+ * Each Received header describes one relay:
+ *   "from SENDER by RECEIVER ... ; TIMESTAMP"
+ *
+ * Strategy (per header, oldest first):
+ *   1. Prefer a public IPv4 found anywhere in the header.
+ *   2. Otherwise extract the "from" hostname (the sending server).
+ *   3. For the final header, also extract the "by" hostname (the receiving server)
+ *      so the destination hop appears on the map.
+ *   4. "by"-only headers (no "from") still contribute the "by" hostname.
+ *
  * Parses bottom-up (oldest first = origin → destination).
  */
 function parseEML(text) {
@@ -771,12 +779,29 @@ function parseEML(text) {
 
   const IPv4_RE = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
   const DATE_RE = /;\s*(.+)$/;
-  // Match hostnames in "from hostname" or "by hostname" clauses
-  const HOST_RE = /(?:from|by)\s+([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)/gi;
+
+  // Separate regexes for from and by clauses
+  const FROM_RE = /\bfrom\s+([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)/i;
+  const BY_RE   = /\bby\s+([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)/i;
+
+  const SKIP_HOSTS = /\.(local|internal|arpa)$|^localhost$|^unknown$/i;
 
   const results = [];
 
-  for (const header of receivedHeaders) {
+  const pushHop = (ipOrHostname, isIp, timestamp) => {
+    const key = `${ipOrHostname}_${timestamp.getTime()}`;
+    if (results.some(r => `${r.ip||r.hostname}_${r.timestamp.getTime()}` === key)) return;
+    if (isIp) {
+      results.push({ ip: ipOrHostname, hostname: null, timestamp, lat: null, lng: null, city: '…', country: '', isp: '', delta_ms: null });
+    } else {
+      results.push({ ip: null, hostname: ipOrHostname, timestamp, lat: null, lng: null, city: '…', country: '', isp: '', delta_ms: null });
+    }
+  };
+
+  for (let hi = 0; hi < receivedHeaders.length; hi++) {
+    const header = receivedHeaders[hi];
+    const isLast = hi === receivedHeaders.length - 1;
+
     const dateMatch = header.match(DATE_RE);
     let timestamp = null;
     if (dateMatch) {
@@ -785,40 +810,38 @@ function parseEML(text) {
     }
     if (!timestamp) continue;
 
-    // Try public IPv4 first
+    // 1. Try public IPv4 anywhere in header
     const ips = [];
     let m;
     IPv4_RE.lastIndex = 0;
     while ((m = IPv4_RE.exec(header)) !== null) {
       if (!isPrivateIP(m[1])) ips.push(m[1]);
     }
-
     if (ips.length > 0) {
-      const key = `${ips[0]}_${timestamp.getTime()}`;
-      if (!results.some(r => `${r.ip||r.hostname}_${r.timestamp.getTime()}` === key)) {
-        results.push({ ip: ips[0], hostname: null, timestamp, lat: null, lng: null, city: '…', country: '', isp: '', delta_ms: null });
-      }
+      pushHop(ips[0], true, timestamp);
+      // On the last header, also add the second IP (receiving server) if present
+      if (isLast && ips.length > 1) pushHop(ips[1], true, timestamp);
       continue;
     }
 
-    // No public IPv4 — extract hostname for later DNS-over-HTTPS resolution
-    const hostnames = [];
-    HOST_RE.lastIndex = 0;
-    let hm;
-    while ((hm = HOST_RE.exec(header)) !== null) {
-      const h = hm[1].toLowerCase();
-      if (!h.endsWith('.local') && !h.endsWith('.internal') && h !== 'localhost') {
-        hostnames.push(h);
-      }
+    // 2. No IPv4 — extract from/by hostnames
+    const fromMatch = header.match(FROM_RE);
+    const byMatch   = header.match(BY_RE);
+
+    const fromHost = fromMatch && !SKIP_HOSTS.test(fromMatch[1]) ? fromMatch[1].toLowerCase() : null;
+    const byHost   = byMatch   && !SKIP_HOSTS.test(byMatch[1])   ? byMatch[1].toLowerCase()   : null;
+
+    if (fromHost) {
+      pushHop(fromHost, false, timestamp);
+    } else if (!fromHost && byHost) {
+      // "by"-only header (no from clause) — the by server is the hop
+      pushHop(byHost, false, timestamp);
     }
 
-    if (hostnames.length > 0) {
-      const key = `${hostnames[0]}_${timestamp.getTime()}`;
-      if (!results.some(r => `${r.ip||r.hostname}_${r.timestamp.getTime()}` === key)) {
-        results.push({ ip: null, hostname: hostnames[0], timestamp, lat: null, lng: null, city: '…', country: '', isp: '', delta_ms: null });
-      }
+    // On the last header, the "by" host is the final destination — always add it
+    if (isLast && byHost && byHost !== fromHost) {
+      pushHop(byHost, false, timestamp);
     }
-    // Pure IPv6 loopback with no usable hostname — silently skip
   }
 
   // Compute deltas
