@@ -742,6 +742,7 @@ let isPlaying = false;
 let currentHopIndex = 0;
 let flightPath = null;
 let markers = [];
+let serverMarkers = []; // only the actual google.maps.Marker objects, indexed by hop
 let plane = null;
 
 // ════════════════════════════════════════════
@@ -1133,6 +1134,7 @@ function initMap(validHops) {
   if (animationId) cancelAnimationFrame(animationId);
   markers.forEach(m => m.setMap(null));
   markers = [];
+  serverMarkers = [];
   if (flightPath) flightPath.setMap(null);
   if (plane) plane.setMap(null);
 
@@ -1184,6 +1186,7 @@ function initMap(validHops) {
     });
     marker.addListener('click', () => showTooltip(hop, i, validHops.length));
     markers.push(marker);
+    serverMarkers.push(marker); // track by hop index for animation
 
     // ISP label pinned below the server icon
     const ispLabel = new google.maps.InfoWindow({
@@ -1353,11 +1356,11 @@ function updatePlanePosition(elapsed) {
         document.getElementById('hop-label').textContent = `Flying: hop ${i+1} → ${i+2} / ${segments.length + 1}`;
 
         // Pulse the destination server marker as plane approaches
-        if (t > 0.7 && markers[i+1]) {
+        if (t > 0.7 && serverMarkers[i+1]) {
           const color = (i+1 === segments.length) ? '#ff6b35' : '#00e5ff';
           const pulse = Math.sin((t - 0.7) * Math.PI / 0.3); // 0→1→0
           const s = 32 + Math.round(pulse * 6);
-          markers[i+1].setIcon({
+          serverMarkers[i+1].setIcon({
             url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(serverSVG(color, i+1 === 0 || i+1 === segments.length)),
             scaledSize: new google.maps.Size(s, s * 1.25),
             anchor: new google.maps.Point(s/2, s * 1.25)
@@ -1377,8 +1380,8 @@ function updatePlanePosition(elapsed) {
         const glowPulse = Math.sin(tDwell * Math.PI); // up and back
         const s = 32 + Math.round(glowPulse * 8);
         const color = (i+1 === segments.length) ? '#ff6b35' : (i+1 === 0) ? '#7fff6b' : '#00e5ff';
-        if (markers[i+1]) {
-          markers[i+1].setIcon({
+        if (serverMarkers[i+1]) {
+          serverMarkers[i+1].setIcon({
             url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(serverSVG(color, i+1 === 0 || i+1 === segments.length, glowPulse)),
             scaledSize: new google.maps.Size(s, s * 1.25),
             anchor: new google.maps.Point(s/2, s * 1.25)
@@ -1391,8 +1394,8 @@ function updatePlanePosition(elapsed) {
           plane.setPosition(new google.maps.LatLng(seg.to.lat, seg.to.lng));
           // Reset server icon size
           const baseColor = (i+1 === segments.length) ? '#ff6b35' : (i+1 === 0) ? '#7fff6b' : '#00e5ff';
-          if (markers[i+1]) {
-            markers[i+1].setIcon({
+          if (serverMarkers[i+1]) {
+            serverMarkers[i+1].setIcon({
               url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(serverSVG(baseColor, i+1 === 0 || i+1 === segments.length, 0)),
               scaledSize: new google.maps.Size(32, 40),
               anchor: new google.maps.Point(16, 40)
@@ -1514,7 +1517,7 @@ const DARK_MAP_STYLE = [
 document.getElementById('reset-btn').addEventListener('click', () => {
   hops = [];
   if (animationId) cancelAnimationFrame(animationId);
-  markers.forEach(m => m.setMap(null)); markers = [];
+  markers.forEach(m => m.setMap(null)); markers = []; serverMarkers = [];
   if (flightPath) { flightPath.setMap(null); flightPath = null; }
   if (plane) { plane.setMap(null); plane = null; }
   document.getElementById('hops-list').innerHTML = '<div class="empty-hops">Drop an EML file above<br>to see extracted hops here.</div>';
